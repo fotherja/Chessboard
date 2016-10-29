@@ -7,10 +7,13 @@
 
 #define   STEPS_PER_SQUARE          7100    
 #define   STEPS_MIN                 0
-#define   STEPS_MAX                 STEPS_PER_SQUARE * 9
+#define   STEPS_MAX                 (STEPS_PER_SQUARE * 9) - 1000
+#define   HALF_SQUARE               STEPS_PER_SQUARE/2
 #define   STEPS_EXTRA               500
 #define   X_OFFSET                  -1000
 #define   Y_OFFSET                  0
+#define   X_ZERO_OFFSET             500
+#define   Y_ZERO_OFFSET             1100
 
 #define   RED                       0
 #define   GREEN                     1
@@ -25,12 +28,11 @@
 //--- Pin definitions: -----------------------------------------------------------
 #define   servo_pin                 13
 
-#define   X_Limit_Switch            A0                                            // The switch pulls this pin low when the magnet head is in the (0, Y) Position
-#define   Y_Limit_Switch            A1                                            // The switch pulls this pin low when the magnet head is in the (X, 0) Position
+#define   X_Limit_Switch            8                                             // The switch pulls this pin low when the magnet head is in the (0, Y) Position
+#define   Y_Limit_Switch            9                                             // The switch pulls this pin low when the magnet head is in the (X, 0) Position
 
-#define   Left_Select_Button        A2                                            //
-#define   Right_Select_Button       A4                                            // These are the 3 buttons available to press on the actual chess board machine. Pulls low
-#define   Mode_Button               A3                                            // 
+#define   Mode_Button               52                                            // 
+#define   Mode_Button_Light         53
 
 #define   X_Stepper_Dir             2                                             // Direction control for X axis stepper motor
 #define   X_Stepper_Step            3                                             // Step pin for X axis stepper motor

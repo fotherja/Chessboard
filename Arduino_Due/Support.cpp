@@ -10,12 +10,16 @@ void Configure_Pins()
   pinMode(Y_Stepper_Step, OUTPUT);
   pinMode(Y_Stepper_Dir, OUTPUT);    
   pinMode(X_Stepper_Step, OUTPUT);
-  
-/*  
+    
   // Configure the switch lines for pullup:
   pinMode(X_Limit_Switch, INPUT_PULLUP);
   pinMode(Y_Limit_Switch, INPUT_PULLUP);
+
+  pinMode(Mode_Button, INPUT_PULLUP);
+  pinMode(Mode_Button_Light, OUTPUT);
+  digitalWrite(Mode_Button_Light, HIGH);
   
+/*  
   pinMode(Left_Select_Button, INPUT_PULLUP);
   pinMode(Right_Select_Button, INPUT_PULLUP); 
   pinMode(Mode_Button, INPUT_PULLUP);  

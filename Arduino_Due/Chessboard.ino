@@ -5,10 +5,15 @@
  * respond with a DONE once that instruction has been carried out. 
  * 
  * 
- * To do next:
+ * To do next:  
+ *  - Move taking piece first most of the way
+ *  - button interface (Reset)
+ *  - Why does it occassionally move weirdly?
+ *  
+ *  
+ *  
  *  - En Passant
  *  - Promotion
- *  - Zero Head!
  * 
  * Functions:
  *  - Communication with Pi. Wait for a command from the Pi (me2e4) and transmit "DONE" when completed.
@@ -30,11 +35,10 @@
  *      # Goes through each board square in FEN, checks if the required piece is in position, if it isn't, it runs Remove_Piece() if there's an occupying piece,
  *        locates the needed piece, and moves it to position.
  *  
- *  - Castle
- *  
- *  - Promote
  * 
  */
+
+//#define  _DEBUG
  
 //--------------------------------------------------------------------------------
 //################################################################################
@@ -53,6 +57,9 @@ char  Command_buffer[5];
 
 byte  Timer_Ticks = 0;
 byte  Update_MangetoSensor_Positions; 
+ 
+unsigned long Total_Button_Press_Time, Intial_Button_Press_Time;
+byte Pause_Flag = 0;
 
 AccelStepper Xstepper(AccelStepper::DRIVER, X_Stepper_Step, X_Stepper_Dir);       // Define some steppers and the pins that will use
 AccelStepper Ystepper(AccelStepper::DRIVER, Y_Stepper_Step, Y_Stepper_Dir);
@@ -63,8 +70,10 @@ Servo servo1;
 //--------------------------------------------------------------------------------
 void setup() 
 { 
-  Configure_Pins();
-  //Zero_Head();
+  Configure_Pins();  
+  Xstepper.setPinsInverted(1,0,0);                                                // Invert X axis 
+  attachInterrupt(digitalPinToInterrupt(Mode_Button), Button_Press, CHANGE);  
+  Zero_Head();
   
   Serial.begin(115200);
   Serial.setTimeout(1000);
@@ -72,14 +81,9 @@ void setup()
   servo1.attach(servo_pin); 
   
   Piece_Track_Buffer_Initalise(); 
-  //Print_Piece_Track_Buffer();
-
-  Xstepper.setMaxSpeed(30000.0);
-  Xstepper.setAcceleration(30000.0);  
-  Xstepper.setPinsInverted(1,0,0);                                                // Invert X axis  
-  
-  Ystepper.setMaxSpeed(30000.0);
-  Ystepper.setAcceleration(30000.0); 
+  #ifdef _DEBUG  
+    Print_Piece_Track_Buffer();
+  #endif 
 
   Disengage_Head();
 }
@@ -88,23 +92,43 @@ void setup()
 //################################################################################
 //--------------------------------------------------------------------------------
 void loop() 
-{   
+{  
   byte Valid_Command = false;                                                     // We haven't received a command yet so of course its false!
   int Coord_X, Coord_Y, Coord_U, Coord_V;                                         // Store the coordinates of positions ie. (4,6) to (4,5) etc
   long X, Y, U, V;                                                                // Store the step coordinates used by motors ie. (7100, 14200) to etc
+  byte Remove_Piece_Flag = 0;
+  long X_CORNER_B, Y_CORNER_B;
+  byte Update_Flag = 0;
    
   while(1)  
   {   
     // 1) --------------- Obtain a valid command over the serial port ------------ 
-    //Serial.println("Please enter a move (eg. me2e4): ");
+    #ifdef _DEBUG
+      Serial.println("Please enter a move (eg. me2e4): ");
+    #endif
     Valid_Command = false;
     while(!Valid_Command)                                                         // Loop until we receive a valid command
     {
       while(!Get_Command())                                                       // Wait for a command
-      {}
-    
-      //Serial.print("Command Received: ");                                         // Display whatever we have just received
-      //Serial.println(Command_buffer);
+      {
+        if(Pause_Flag == 2)                                                       // If Button has been held, then reset
+        {
+          Pause_Flag = 0;       
+          Zero_Head();
+          Pause_Flag = 1;
+          Piece_Track_Buffer_Initalise(); 
+          Serial.print("R");
+
+          #ifdef _DEBUG  
+            Print_Piece_Track_Buffer();
+          #endif             
+        }     
+      }
+
+      #ifdef _DEBUG
+        Serial.print("Command Received: ");                                       // Display whatever we have just received
+        Serial.println(Command_buffer);
+      #endif
        
       Coord_X = (Command_buffer[0] - 96);                                         // Convert Command into coordinates to move from and to:                          
       Coord_Y = (Command_buffer[1] - 48);                                         // 1) Convert ASCII characters into a 0-9 value
@@ -120,7 +144,9 @@ void loop()
         if(Y >= STEPS_MIN and Y <= STEPS_MAX) {
           if(U >= STEPS_MIN and U <= STEPS_MAX) {
             if(V >= STEPS_MIN and V <= STEPS_MAX) {
-              //Serial.println("Valid coordinates!");              
+              #ifdef _DEBUG
+                Serial.println("Valid coordinates!");
+              #endif              
               Valid_Command = true;
             }  
           }  
@@ -128,28 +154,73 @@ void loop()
       }
       
       if(!Valid_Command)  {
-        //Serial.println("Invalid coordinates!");
-        //Serial.println("Please enter a move (eg. me2e4): ");
+        #ifdef _DEBUG
+          Serial.println("Invalid coordinates!");
+          Serial.println("Please enter a move (eg. me2e4): ");
+        #endif
         Move_Head(0, 0);  
       }
     }                                                                             // If a valid command, continue. Otherwise loop back and wait for a new command
 
     // 2) --------------- Move the stepper motors to move the pieces -------------
-    //Serial.print("Coordinates to move from: (");
-    //Serial.print(Coord_X); Serial.print(", "); Serial.print(Coord_Y); Serial.println(")");  
-    //Serial.print("Coordinates to move to: (");
-    //Serial.print(Coord_U); Serial.print(", "); Serial.print(Coord_V); Serial.println(")"); 
+    #ifdef _DEBUG
+      Serial.print("Coordinates to move from: (");
+      Serial.print(Coord_X); Serial.print(", "); Serial.print(Coord_Y); Serial.println(")");  
+      Serial.print("Coordinates to move to: (");
+      Serial.print(Coord_U); Serial.print(", "); Serial.print(Coord_V); Serial.println(")"); 
+    #endif
 
     // A) DO WE HAVE TO REMOVE A PIECE FIRST?
-    if(Piece_Track_Buffer[Coord_U][Coord_V] != '0') {                            
-      //Serial.println("Removing piece first...");                        
-      Remove_Piece(Coord_U, Coord_V);                                           
+    if(Piece_Track_Buffer[Coord_U][Coord_V] != '0') {
+      #ifdef _DEBUG                                    
+        Serial.println("Removing piece first...");
+      #endif 
+
+      Remove_Piece_Flag = 1;      
+      if(Coord_U > Coord_X and Coord_V > Coord_Y) {                             // move up and right
+        X_CORNER_B = -HALF_SQUARE;
+        Y_CORNER_B = -HALF_SQUARE;                          
+      }
+      else if(Coord_U > Coord_X and Coord_V < Coord_Y) {                        // move down and right
+        X_CORNER_B = -HALF_SQUARE;
+        Y_CORNER_B = HALF_SQUARE;               
+      }
+      else if(Coord_U < Coord_X and Coord_V > Coord_Y) {                        // move up and left
+        X_CORNER_B = HALF_SQUARE;
+        Y_CORNER_B = -HALF_SQUARE;                            
+      }
+      else if(Coord_U < Coord_X and Coord_V < Coord_Y) {                        // move down and left
+        X_CORNER_B = HALF_SQUARE;
+        Y_CORNER_B = HALF_SQUARE;                            
+      }
+      else if(Coord_U < Coord_X and Coord_V == Coord_Y) {                       // move left
+        X_CORNER_B = HALF_SQUARE;
+        Y_CORNER_B = 0;                            
+      }
+      else if(Coord_U > Coord_X and Coord_V == Coord_Y) {                       // move right
+        X_CORNER_B = -HALF_SQUARE;
+        Y_CORNER_B = 0;                            
+      } 
+      else if(Coord_U == Coord_X and Coord_V < Coord_Y) {                        // move down
+        X_CORNER_B = 0;
+        Y_CORNER_B = HALF_SQUARE;                            
+      }
+      else if(Coord_U == Coord_X and Coord_V > Coord_Y) {                        // move up
+        X_CORNER_B = 0;
+        Y_CORNER_B = -HALF_SQUARE;                            
+      }                                                     
+    }
+    else {
+        X_CORNER_B = 0;
+        Y_CORNER_B = 0;      
     }
     
     // B) IS THIS MOVE A WHITE CASTLE?
     if(Piece_Track_Buffer[Coord_X][Coord_Y] == 'K' and abs(Coord_U - Coord_X) > 1)                                            
-    {                                                
-      //Serial.println("White is castling!");
+    {     
+      #ifdef _DEBUG                                           
+        Serial.println("White is castling!");
+      #endif
       Move_Head(X, Y);          
       Engage_Head();
       Move_Head_Extra(U, V);
@@ -159,8 +230,8 @@ void loop()
       if(Coord_U > Coord_X) {                                                     // Right side (king's side)
         Move_Head(STEPS_PER_SQUARE * 8, STEPS_PER_SQUARE);
         Engage_Head();
-        Move_Head(STEPS_PER_SQUARE * 8, STEPS_PER_SQUARE/2);
-        Move_Head(STEPS_PER_SQUARE * 6, STEPS_PER_SQUARE/2); 
+        Move_Head(STEPS_PER_SQUARE * 8, HALF_SQUARE);
+        Move_Head(STEPS_PER_SQUARE * 6, HALF_SQUARE); 
         Move_Head_Extra(STEPS_PER_SQUARE * 6, STEPS_PER_SQUARE);
         Disengage_Head();
         Update_Position_Table(8, 1, 6, 1);          
@@ -168,8 +239,8 @@ void loop()
       else  {                                                                     // left side (queen's side)
         Move_Head(STEPS_PER_SQUARE, STEPS_PER_SQUARE);
         Engage_Head();
-        Move_Head(STEPS_PER_SQUARE, STEPS_PER_SQUARE/2);
-        Move_Head(STEPS_PER_SQUARE * 4, STEPS_PER_SQUARE/2); 
+        Move_Head(STEPS_PER_SQUARE, HALF_SQUARE);
+        Move_Head(STEPS_PER_SQUARE * 4, HALF_SQUARE); 
         Move_Head_Extra(STEPS_PER_SQUARE * 4, STEPS_PER_SQUARE);
         Disengage_Head();
         Update_Position_Table(1, 1, 4, 1);          
@@ -178,8 +249,10 @@ void loop()
 
     // C) IS THIS MOVE A BLACK CASTLE?
     else if(Piece_Track_Buffer[Coord_X][Coord_Y] == 'k' and abs(Coord_U - Coord_X) > 1)                                           
-    {                                                
-      //Serial.println("Black is castling!");
+    { 
+      #ifdef _DEBUG                                               
+        Serial.println("Black is castling!");
+      #endif
       Move_Head(X, Y);          
       Engage_Head();
       Move_Head_Extra(U, V);
@@ -209,64 +282,83 @@ void loop()
     // D) ARE WE MOVING A KNIGHT?
     else if(Piece_Track_Buffer[Coord_X][Coord_Y] == 'n' or                        
        Piece_Track_Buffer[Coord_X][Coord_Y] == 'N') 
-    {                            
-      //Serial.println("We're moving a knight!");
+    {   
+      #ifdef _DEBUG                         
+        Serial.println("We're moving a knight!");
+      #endif
       Move_Head(X, Y);
       Engage_Head();
       
       if(Coord_U - Coord_X > 0) {                                                 // Moving the castle rightwards
         if(Coord_V - Coord_Y == 2)  {                                               
-          Move_Head(X + (STEPS_PER_SQUARE/2), Y + (STEPS_PER_SQUARE/2));
-          Move_Head(X + (STEPS_PER_SQUARE/2), V - (STEPS_PER_SQUARE/2));    
+          Move_Head(X + HALF_SQUARE, Y + HALF_SQUARE);
+          Move_Head(X + HALF_SQUARE, V - HALF_SQUARE);    
         }
         else if(Coord_V - Coord_Y == 1)  {
-          Move_Head(X + (STEPS_PER_SQUARE/2), Y + (STEPS_PER_SQUARE/2));  
-          Move_Head(U - (STEPS_PER_SQUARE/2), Y + (STEPS_PER_SQUARE/2));
+          Move_Head(X + HALF_SQUARE, Y + HALF_SQUARE);  
+          Move_Head(U - HALF_SQUARE, Y + HALF_SQUARE);
         }
         else if(Coord_V - Coord_Y == -1)  {
-          Move_Head(X + (STEPS_PER_SQUARE/2), Y - (STEPS_PER_SQUARE/2));
-          Move_Head(U - (STEPS_PER_SQUARE/2), Y - (STEPS_PER_SQUARE/2));  
+          Move_Head(X + HALF_SQUARE, Y - HALF_SQUARE);
+          Move_Head(U - HALF_SQUARE, Y - HALF_SQUARE);  
         }
         else {
-          Move_Head(X + (STEPS_PER_SQUARE/2), Y - (STEPS_PER_SQUARE/2));
-          Move_Head(X + (STEPS_PER_SQUARE/2), V + (STEPS_PER_SQUARE/2));  
+          Move_Head(X + HALF_SQUARE, Y - HALF_SQUARE);
+          Move_Head(X + HALF_SQUARE, V + HALF_SQUARE);  
         }
       }
       else  {                                                                     // Moving the castle leftwards
          if(Coord_V - Coord_Y == 2)  {                                               
-          Move_Head(X - (STEPS_PER_SQUARE/2), Y + (STEPS_PER_SQUARE/2));
-          Move_Head(X - (STEPS_PER_SQUARE/2), V - (STEPS_PER_SQUARE/2));    
+          Move_Head(X - HALF_SQUARE, Y + HALF_SQUARE);
+          Move_Head(X - HALF_SQUARE, V - HALF_SQUARE);    
         }
         else if(Coord_V - Coord_Y == 1)  {
-          Move_Head(X - (STEPS_PER_SQUARE/2), Y + (STEPS_PER_SQUARE/2));  
-          Move_Head(U + (STEPS_PER_SQUARE/2), Y + (STEPS_PER_SQUARE/2));
+          Move_Head(X - HALF_SQUARE, Y + HALF_SQUARE);  
+          Move_Head(U + HALF_SQUARE, Y + HALF_SQUARE);
         }
         else if(Coord_V - Coord_Y == -1)  {
-          Move_Head(X - (STEPS_PER_SQUARE/2), Y - (STEPS_PER_SQUARE/2));
-          Move_Head(U + (STEPS_PER_SQUARE/2), Y - (STEPS_PER_SQUARE/2));  
+          Move_Head(X - HALF_SQUARE, Y - HALF_SQUARE);
+          Move_Head(U + HALF_SQUARE, Y - HALF_SQUARE);  
         }
         else {
-          Move_Head(X - (STEPS_PER_SQUARE/2), Y - (STEPS_PER_SQUARE/2));
-          Move_Head(X - (STEPS_PER_SQUARE/2), V + (STEPS_PER_SQUARE/2));  
+          Move_Head(X - HALF_SQUARE, Y - HALF_SQUARE);
+          Move_Head(X - HALF_SQUARE, V + HALF_SQUARE);  
         }        
       }     
                               
-      Move_Head_Extra(U, V);   
-      Disengage_Head(); 
-      Update_Position_Table(Coord_X, Coord_Y, Coord_U, Coord_V);                          
+      Move_Head_Extra(U + X_CORNER_B, V + Y_CORNER_B);   
+      Disengage_Head();       
+      Update_Flag = 1;                         
     }
 
     // E) JUST AN ORDINARY MOVE THEN!
     else  { 
       Move_Head(X, Y);          
       Engage_Head();                              
-      Move_Head_Extra(U, V);   
-      Disengage_Head();
-      Update_Position_Table(Coord_X, Coord_Y, Coord_U, Coord_V);           
+      Move_Head_Extra(U + X_CORNER_B, V + Y_CORNER_B);   
+      Disengage_Head();      
+      Update_Flag = 1;           
     }
 
-    Serial.print("D");    
-    //Print_Piece_Track_Buffer();
+    if(Remove_Piece_Flag) {
+      Remove_Piece(Coord_U, Coord_V, X_CORNER_B, Y_CORNER_B);     
+      Move_Head(U + X_CORNER_B, V + Y_CORNER_B);
+      Engage_Head(); 
+      Move_Head_Extra(U, V);
+      Disengage_Head();
+      Remove_Piece_Flag = 0;            
+    }
+
+    if(Update_Flag)
+    {
+      Update_Flag = 0;
+      Update_Position_Table(Coord_X, Coord_Y, Coord_U, Coord_V);
+    }
+
+    Serial.print("D");   
+    #ifdef _DEBUG 
+      Print_Piece_Track_Buffer();
+    #endif
   }                                                                               // Command carried out, go wait for the next command          
 }
 
@@ -285,6 +377,31 @@ byte Get_Command()
   }
 
   if(Command_buffer[0])  {                                                        // Verify that we've received something
+    if(Command_buffer[0] == 'r')
+      {        
+        Setup_Pieces();
+        Piece_Track_Buffer_Initalise();
+        Zero_Head();
+        Serial.print("D");
+        return(0);
+
+        #ifdef _DEBUG
+          Serial.println();
+          Print_Piece_Track_Buffer();
+        #endif           
+      }
+    if(Command_buffer[0] == 'q')
+      {                
+        Piece_Track_Buffer_Initalise();
+        Zero_Head();
+        Serial.print("D");
+        return(0);
+
+        #ifdef _DEBUG
+          Serial.println();
+          Print_Piece_Track_Buffer();
+        #endif           
+      }      
     return(1);
   }
   else  {
@@ -330,9 +447,156 @@ void Piece_Track_Buffer_Initalise()
 //--------------------------------------------------------------------------------
 //################################################################################
 //--------------------------------------------------------------------------------
+void Setup_Pieces()
+{
+  #ifdef _DEBUG
+    Serial.println("Setting up all the Pieces");
+  #endif
+  
+  char Piece_to_find_Buffer[] = "RNBQKBNRPPPPPPPPpppppppprnbqkbnr";
+  byte Piece_Locations_X = 1;
+  byte Piece_Locations_Y = 1;
+  byte Pieces_Found = 0;
+
+  while(Pieces_Found < 32)  
+  {    
+    #ifdef _DEBUG
+      delay(100);
+      Serial.print("Piece to find: "); Serial.print(Piece_to_find_Buffer[Pieces_Found]);
+      Serial.print("  Piece_Locations_X: "); Serial.print(Piece_Locations_X);
+      Serial.print("  Piece_Locations_Y: "); Serial.print(Piece_Locations_Y);
+      Serial.print("  Pieces found: "); Serial.println(Pieces_Found);
+    #endif
+    
+    for(int j = 9; j >= 0; j--) {
+      for(int i = 9; i >= 0; i--) {      
+        if(Piece_Track_Buffer[i][j] == Piece_to_find_Buffer[Pieces_Found])
+        {           
+          #ifdef _DEBUG
+            Serial.print("Found piece at: "); Serial.print(i);
+            Serial.print(", "); Serial.println(j);
+          #endif
+          
+          // Don't move a piece that's on the right square...          
+          byte Piece_in_Correct_Position = 0;          
+          if(Piece_Track_Buffer[i][j] == 'p' and i >= 1 and i <= 8 and j == 7) {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'r' and i == 8 and j == 8)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'r' and i == 1 and j == 8)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'n' and i == 7 and j == 8)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'n' and i == 2 and j == 8)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'b' and i == 6 and j == 8)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'b' and i == 3 and j == 8)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'q' and i == 4 and j == 8)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'k' and i == 5 and j == 8)  {Piece_in_Correct_Position = 1;}
+
+          if(Piece_Track_Buffer[i][j] == 'P' and i >= 1 and i <= 8 and j == 2) {Piece_in_Correct_Position = 1;} 
+          if(Piece_Track_Buffer[i][j] == 'R' and i == 8 and j == 1)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'R' and i == 1 and j == 1)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'N' and i == 7 and j == 1)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'N' and i == 2 and j == 1)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'B' and i == 6 and j == 1)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'B' and i == 3 and j == 1)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'Q' and i == 4 and j == 1)  {Piece_in_Correct_Position = 1;}
+          if(Piece_Track_Buffer[i][j] == 'K' and i == 5 and j == 1)  {Piece_in_Correct_Position = 1;}
+          
+          if(Piece_in_Correct_Position and i == Piece_Locations_X and j == Piece_Locations_Y)
+          {
+            Pieces_Found++;            
+            Piece_Locations_X++;
+
+            #ifdef _DEBUG
+              Serial.println("Piece in (i,j) location already correct");          
+            #endif                       
+          }    
+
+          // Don't move a piece on to a square that has the correct piece on it...
+          else if(Piece_Track_Buffer[i][j] == Piece_Track_Buffer[Piece_Locations_X][Piece_Locations_Y])
+          {
+            Pieces_Found++;            
+            Piece_Locations_X++;
+            Piece_in_Correct_Position = 1;
+
+            #ifdef _DEBUG
+              Serial.println("Piece in (X,Y) location already correct");            
+            #endif            
+          }                         
+          
+          if(!Piece_in_Correct_Position)
+          {
+            #ifdef _DEBUG
+              Serial.println("Piece being moved");          
+            #endif
+                        
+            if(Piece_Track_Buffer[Piece_Locations_X][Piece_Locations_Y] != '0') { 
+              Remove_Piece(Piece_Locations_X, Piece_Locations_Y, HALF_SQUARE, HALF_SQUARE);                                           
+            }          
+            
+            Move_Head(STEPS_PER_SQUARE * i, STEPS_PER_SQUARE * j);
+            Engage_Head();
+            
+            long X_CORNER_A, Y_CORNER_A, X_CORNER_B, Y_CORNER_B;
+            if(Piece_Locations_X >= i and Piece_Locations_Y >= j) {               // move up and right              
+              X_CORNER_A = HALF_SQUARE;
+              Y_CORNER_A = HALF_SQUARE;   
+              X_CORNER_B = -HALF_SQUARE;
+              Y_CORNER_B = -HALF_SQUARE;                          
+            }
+            else if(Piece_Locations_X >= i and Piece_Locations_Y <= j) {          // move down and right
+              X_CORNER_A = HALF_SQUARE;
+              Y_CORNER_A = -HALF_SQUARE;
+              X_CORNER_B = -HALF_SQUARE;
+              Y_CORNER_B = HALF_SQUARE;               
+            }
+            else if(Piece_Locations_X <= i and Piece_Locations_Y >= j) {          // move up and left
+              X_CORNER_A = -HALF_SQUARE;
+              Y_CORNER_A = HALF_SQUARE;
+              X_CORNER_B = HALF_SQUARE;
+              Y_CORNER_B = -HALF_SQUARE;                            
+            }
+            else  {                                                               // move down and left
+              X_CORNER_A = -HALF_SQUARE;
+              Y_CORNER_A = -HALF_SQUARE;
+              X_CORNER_B = HALF_SQUARE;
+              Y_CORNER_B = HALF_SQUARE;                            
+            }
+            
+            Move_Head((STEPS_PER_SQUARE * i) + X_CORNER_A, (STEPS_PER_SQUARE * j) + Y_CORNER_A);            
+            Move_Head((STEPS_PER_SQUARE * Piece_Locations_X) + X_CORNER_B, (STEPS_PER_SQUARE * j) + Y_CORNER_A);            
+            Move_Head((STEPS_PER_SQUARE * Piece_Locations_X) + X_CORNER_B, (STEPS_PER_SQUARE * Piece_Locations_Y) + Y_CORNER_B);            
+            Move_Head_Extra((STEPS_PER_SQUARE * Piece_Locations_X), (STEPS_PER_SQUARE * Piece_Locations_Y));
+            
+            Disengage_Head();
+            
+            Update_Position_Table(i, j, Piece_Locations_X, Piece_Locations_Y);           
+  
+            Pieces_Found++;            
+            Piece_Locations_X++;            
+          }
+
+          if(Piece_Locations_X == 9)  {
+            Piece_Locations_X = 1;
+            Piece_Locations_Y++;
+          }
+          if(Piece_Locations_Y == 3)  {
+            Piece_Locations_Y = 7;   
+          }        
+        }                
+      }      
+    }
+  }
+
+  #ifdef _DEBUG
+    Serial.println("Setup complete");
+  #endif
+  
+}
+
+//--------------------------------------------------------------------------------
+//################################################################################
+//--------------------------------------------------------------------------------
 void Print_Piece_Track_Buffer()
 {
-  //Serial.println("Piece Track Buffer: ");
+  Serial.println("Piece Track Buffer: ");
   
   for(int y = 9; y >= 0; y--)  {
     for(int x = 0; x <= 9; x++)  {
@@ -358,8 +622,10 @@ void Move_Head(long A, long B)
   Ystepper.moveTo(B);
   
   while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {
-    Xstepper.run();  
-    Ystepper.run();
+    if(!Pause_Flag) {
+      Xstepper.run();  
+      Ystepper.run(); 
+    } 
   }
 }
 
@@ -388,8 +654,10 @@ void Move_Head_Extra(long A, long B)
   Ystepper.moveTo(B);
   
   while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {
-    Xstepper.run();  
-    Ystepper.run();
+    if(!Pause_Flag) {
+      Xstepper.run();  
+      Ystepper.run(); 
+    }   
   }
 }
 
@@ -423,9 +691,9 @@ void Update_Position_Table(int Coord_X, int Coord_Y, int Coord_U, int Coord_V)
 //--------------------------------------------------------------------------------
 //################################################################################
 //--------------------------------------------------------------------------------
-void Remove_Piece(byte Coord_U, byte Coord_V)
+void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
 {
-  // Coord_U, Coord_V hold the position of the piece to remove. Coord_X, Coord_Y hold position to take piexe to
+  // Coord_U, Coord_V hold the position of the piece to remove. Coord_X, Coord_Y hold position to take piece to
   // 1) What colour is the piece to remove, 2) find next available square on sidelines, 3) perform movements to get piece there, 4) Update position table
   
   int Taken_Piece, Coord_X, Coord_Y;    
@@ -464,7 +732,9 @@ void Remove_Piece(byte Coord_U, byte Coord_V)
     }
 
     if(Coord_X == 10) {                                                           // By the time we reach here, we should have the x,y coordinates of the next free slot on white's sidelines
-      //Serial.println("There's been a problem searching for a free spot on white's sidelines!");
+      #ifdef _DEBUG
+        Serial.println("There's been a problem searching for a free spot on white's sidelines!");
+      #endif
       return;
     }
   }
@@ -494,13 +764,17 @@ void Remove_Piece(byte Coord_U, byte Coord_V)
     }
 
     if(Coord_X < 0) {                                                             // By the time we reach here, we should have the x,y coordinates of the next free slot on black's sidelines
-      //Serial.println("There's been a problem searching for a free spot on black's sidelines!");
+      #ifdef _DEBUG
+        Serial.println("There's been a problem searching for a free spot on black's sidelines!");
+      #endif
       return;
     }    
   }
 
-  //Serial.print("Position to place removed piece is: (");
-  //Serial.print(Coord_X); Serial.print(", "); Serial.print(Coord_Y); Serial.println(")");
+  #ifdef _DEBUG
+    Serial.print("Position to place removed piece is: (");
+    Serial.print(Coord_X); Serial.print(", "); Serial.print(Coord_Y); Serial.println(")");
+  #endif
 
   // 3)  --------------- Perform the movements to get the piece there ------------
   long X = Coord_U * STEPS_PER_SQUARE;                                            // Initial square
@@ -510,12 +784,12 @@ void Remove_Piece(byte Coord_U, byte Coord_V)
   long V = Coord_Y * STEPS_PER_SQUARE;
 
   if(Coord_X == 0)                                                                // Left sideline
-  {  
+  {      
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
-    Move_Head(X, Y + (STEPS_PER_SQUARE/2));                                       // Move to (X, Y+0.5)          
-    Move_Head((STEPS_PER_SQUARE/2), Y + (STEPS_PER_SQUARE/2));                    // Move to (0.5, Y+0.5):         
-    Move_Head((STEPS_PER_SQUARE/2), V);                                           // Move to (0.5, V)                 
+    Move_Head(X, Y - Y_CORNER_B);                                                 // Move to (X, Y+0.5)          
+    Move_Head(HALF_SQUARE, Y - Y_CORNER_B);                                       // Move to (0.5, Y+0.5):         
+    Move_Head(HALF_SQUARE, V);                                                    // Move to (0.5, V)                 
     Move_Head_Extra(U, V);                                                        // Move to (U, V)  
     Disengage_Head();      
   }
@@ -523,8 +797,8 @@ void Remove_Piece(byte Coord_U, byte Coord_V)
   {
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
-    Move_Head(X, Y + (STEPS_PER_SQUARE/2));                                       // Move to (X, Y+0.5)          
-    Move_Head(((17 * STEPS_PER_SQUARE)/2), Y + (STEPS_PER_SQUARE/2));             // Move to (8.5, Y+0.5):         
+    Move_Head(X, Y - Y_CORNER_B);                                                 // Move to (X, Y+0.5)          
+    Move_Head(((17 * STEPS_PER_SQUARE)/2), Y - Y_CORNER_B);                       // Move to (8.5, Y+0.5):         
     Move_Head(((17 * STEPS_PER_SQUARE)/2), V);                                    // Move to (8.5, V)                 
     Move_Head_Extra(U, V);                                                        // Move to (U, V)  
     Disengage_Head();    
@@ -533,9 +807,9 @@ void Remove_Piece(byte Coord_U, byte Coord_V)
   {
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
-    Move_Head(X + (STEPS_PER_SQUARE/2), Y);                                       // Move to (X+0.5, Y)          
-    Move_Head(X + (STEPS_PER_SQUARE/2), (STEPS_PER_SQUARE/2));                    // Move to (X+0.5, 0.5):         
-    Move_Head(U, (STEPS_PER_SQUARE/2));                                           // Move to (U, 0.5)                 
+    Move_Head(X - X_CORNER_B, Y);                                                 // Move to (X+0.5, Y)          
+    Move_Head(X - X_CORNER_B, HALF_SQUARE);                                       // Move to (X+0.5, 0.5):         
+    Move_Head(U, HALF_SQUARE);                                                    // Move to (U, 0.5)                 
     Move_Head_Extra(U, V);                                                        // Move to (U, V)  
     Disengage_Head();    
   }
@@ -543,8 +817,8 @@ void Remove_Piece(byte Coord_U, byte Coord_V)
   {
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
-    Move_Head(X + (STEPS_PER_SQUARE/2), Y);                                       // Move to (X+0.5, Y)          
-    Move_Head(X + (STEPS_PER_SQUARE/2), ((17 * STEPS_PER_SQUARE)/2));             // Move to (X+0.5, 8.5):         
+    Move_Head(X - X_CORNER_B, Y);                                                 // Move to (X+0.5, Y)          
+    Move_Head(X - X_CORNER_B, ((17 * STEPS_PER_SQUARE)/2));                       // Move to (X+0.5, 8.5):         
     Move_Head(U, ((17 * STEPS_PER_SQUARE)/2));                                    // Move to (U, 8.5)                 
     Move_Head_Extra(U, V);                                                        // Move to (U, V)  
     Disengage_Head();    
@@ -552,6 +826,99 @@ void Remove_Piece(byte Coord_U, byte Coord_V)
 
   // 4)) Update position table
   Update_Position_Table(Coord_U, Coord_V, Coord_X, Coord_Y);
+}
+
+//--------------------------------------------------------------------------------
+//################################################################################
+//--------------------------------------------------------------------------------
+void Zero_Head()
+{
+  #ifdef _DEBUG                            
+    Serial.println("Zeroing Head");
+  #endif
+
+  Xstepper.setMaxSpeed(5000.0);
+  Xstepper.setAcceleration(50000.0);    
+  Ystepper.setMaxSpeed(5000.0);
+  Ystepper.setAcceleration(50000.0);
+
+  // --------------- First move out of corner if currently in it:
+  Xstepper.move(STEPS_MAX);
+  while(!digitalRead(X_Limit_Switch))
+  { 
+    Xstepper.run();             
+  }
+  delay(250);
+
+  Ystepper.move(STEPS_MAX);
+  while(!digitalRead(Y_Limit_Switch))
+  { 
+    Ystepper.run();     
+  }
+  delay(250);
+
+  // --------------- Now move into corner:
+  Xstepper.move(-STEPS_MAX);
+  while(digitalRead(X_Limit_Switch))
+  { 
+    Xstepper.run();             
+  }  
+  delay(250);
+
+  Ystepper.move(-STEPS_MAX);
+  while(digitalRead(Y_Limit_Switch))
+  { 
+    Ystepper.run();             
+  } 
+  delay(250);
+
+  Xstepper.setCurrentPosition(X_ZERO_OFFSET); 
+  Ystepper.setCurrentPosition(Y_ZERO_OFFSET);  
+
+  Xstepper.setMaxSpeed(30000.0);
+  Xstepper.setAcceleration(50000.0);   
+  Ystepper.setMaxSpeed(30000.0);
+  Ystepper.setAcceleration(50000.0);
+
+  Move_Head(0,0);
+
+  #ifdef _DEBUG                            
+    Serial.println("Head in zero position");    
+  #endif
+}
+
+//--------------------------------------------------------------------------------
+//############### INTERRUPT FUNCTIONS ############################################
+//--------------------------------------------------------------------------------
+void Button_Press()
+{
+  //Debounce Button. Is it a short or long press?
+  // Short - Pause/Resume, Long - Just reset piece track buffer.
+
+  static unsigned long last_interrupt_time = 0;  
+  unsigned long interrupt_time = millis();
+  
+  // If interrupts come faster than 50ms, assume it's a bounce and ignore
+  if (interrupt_time - last_interrupt_time > 50) 
+  {    
+    if(!digitalRead(Mode_Button))
+    {  
+      Intial_Button_Press_Time = millis();  
+      if(Pause_Flag == 0) {Pause_Flag = 1;}
+      else {Pause_Flag = 0;}
+    }
+    else
+    {
+      Total_Button_Press_Time = interrupt_time - Intial_Button_Press_Time; 
+    
+      if(Total_Button_Press_Time > 2000)
+      {           
+        Pause_Flag = 2;        
+      }
+    }
+  }
+    
+  last_interrupt_time = interrupt_time;
 }
 
 
