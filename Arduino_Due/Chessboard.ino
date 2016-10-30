@@ -5,12 +5,7 @@
  * respond with a DONE once that instruction has been carried out. 
  * 
  * 
- * To do next:  
- *  - Move taking piece first most of the way
- *  - button interface (Reset)
- *  - Why does it occassionally move weirdly?
- *  
- *  
+ * To do next:
  *  
  *  - En Passant
  *  - Promotion
@@ -72,7 +67,7 @@ void setup()
 { 
   Configure_Pins();  
   Xstepper.setPinsInverted(1,0,0);                                                // Invert X axis 
-  attachInterrupt(digitalPinToInterrupt(Mode_Button), Button_Press, CHANGE);  
+  attachInterrupt(digitalPinToInterrupt(Mode_Button), Button_Press, RISING);  
   Zero_Head();
   
   Serial.begin(115200);
@@ -106,23 +101,12 @@ void loop()
     #ifdef _DEBUG
       Serial.println("Please enter a move (eg. me2e4): ");
     #endif
+    
     Valid_Command = false;
     while(!Valid_Command)                                                         // Loop until we receive a valid command
     {
       while(!Get_Command())                                                       // Wait for a command
-      {
-        if(Pause_Flag == 2)                                                       // If Button has been held, then reset
-        {
-          Pause_Flag = 0;       
-          Zero_Head();
-          Pause_Flag = 1;
-          Piece_Track_Buffer_Initalise(); 
-          Serial.print("R");
-
-          #ifdef _DEBUG  
-            Print_Piece_Track_Buffer();
-          #endif             
-        }     
+      {     
       }
 
       #ifdef _DEBUG
@@ -341,7 +325,16 @@ void loop()
     }
 
     if(Remove_Piece_Flag) {
-      Remove_Piece(Coord_U, Coord_V, X_CORNER_B, Y_CORNER_B);     
+      if(X_CORNER_B == 0) {
+        Remove_Piece(Coord_U, Coord_V, -HALF_SQUARE, Y_CORNER_B);
+      }
+      else if(Y_CORNER_B == 0)  {
+        Remove_Piece(Coord_U, Coord_V, X_CORNER_B, -HALF_SQUARE);
+      }
+      else  {
+        Remove_Piece(Coord_U, Coord_V, X_CORNER_B, Y_CORNER_B);
+      }
+             
       Move_Head(U + X_CORNER_B, V + Y_CORNER_B);
       Engage_Head(); 
       Move_Head_Extra(U, V);
@@ -354,6 +347,14 @@ void loop()
       Update_Flag = 0;
       Update_Position_Table(Coord_X, Coord_Y, Coord_U, Coord_V);
     }
+
+    while(Pause_Flag) {
+      static unsigned long Toggle_Time = millis();
+      if(millis() - Toggle_Time > 250)  {
+        Toggle_Time = millis();
+        digitalWrite(Mode_Button_Light, !digitalRead(Mode_Button_Light)); 
+      }      
+    }    
 
     Serial.print("D");   
     #ifdef _DEBUG 
@@ -623,9 +624,17 @@ void Move_Head(long A, long B)
   
   while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {
     if(!Pause_Flag) {
+      digitalWrite(Mode_Button_Light, HIGH);
       Xstepper.run();  
       Ystepper.run(); 
-    } 
+    }
+    else  {
+      static unsigned long Toggle_Time = millis();
+      if(millis() - Toggle_Time > 250)  {
+        Toggle_Time = millis();
+        digitalWrite(Mode_Button_Light, !digitalRead(Mode_Button_Light)); 
+      }      
+    }
   }
 }
 
@@ -655,9 +664,17 @@ void Move_Head_Extra(long A, long B)
   
   while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {
     if(!Pause_Flag) {
+      digitalWrite(Mode_Button_Light, HIGH);
       Xstepper.run();  
       Ystepper.run(); 
-    }   
+    }
+    else  {
+      static unsigned long Toggle_Time = millis();
+      if(millis() - Toggle_Time > 250)  {
+        Toggle_Time = millis();
+        digitalWrite(Mode_Button_Light, !digitalRead(Mode_Button_Light)); 
+      }      
+    }
   }
 }
 
@@ -693,10 +710,10 @@ void Update_Position_Table(int Coord_X, int Coord_Y, int Coord_U, int Coord_V)
 //--------------------------------------------------------------------------------
 void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
 {
-  // Coord_U, Coord_V hold the position of the piece to remove. Coord_X, Coord_Y hold position to take piece to
+  // Coord_U, Coord_V hold the position of the piece to remove. Coord_W, Coord_Z hold position to take piece to
   // 1) What colour is the piece to remove, 2) find next available square on sidelines, 3) perform movements to get piece there, 4) Update position table
   
-  int Taken_Piece, Coord_X, Coord_Y;    
+  int Taken_Piece, Coord_W, Coord_Z;    
   
   // 1)  --------------- What colour is the piece to remove? ---------------------   
   if(Piece_Track_Buffer[Coord_U][Coord_V] < 'Z')  {
@@ -709,29 +726,29 @@ void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
   // 2)  --------------- Find the next available square on the sidelines --------- 
   if(Taken_Piece == WHITE)  
   {
-    Coord_X = 0;
-    Coord_Y = 9;
+    Coord_W = 0;
+    Coord_Z = 9;
     
-    while(Coord_Y >= 0)                                                           // Search from top left down to bottom left for a free square
+    while(Coord_Z >= 0)                                                           // Search from top left down to bottom left for a free square
     {
-      if(Piece_Track_Buffer[0][Coord_Y] == '0') {
+      if(Piece_Track_Buffer[0][Coord_Z] == '0') {
         break;
       }
-      Coord_Y--;    
+      Coord_Z--;    
     }
 
-    if(Coord_Y < 0) {                                                             // If there weren't any free squares on the left, search from bottom left to bottom right
-      Coord_Y = 0;
-      while(Coord_X <= 9)                                                                 
+    if(Coord_Z < 0) {                                                             // If there weren't any free squares on the left, search from bottom left to bottom right
+      Coord_Z = 0;
+      while(Coord_W <= 9)                                                                 
       {
-        if(Piece_Track_Buffer[Coord_X][0] == '0') {
+        if(Piece_Track_Buffer[Coord_W][0] == '0') {
           break;
         }
-        Coord_X++;    
+        Coord_W++;    
       }
     }
 
-    if(Coord_X == 10) {                                                           // By the time we reach here, we should have the x,y coordinates of the next free slot on white's sidelines
+    if(Coord_W == 10) {                                                           // By the time we reach here, we should have the x,y coordinates of the next free slot on white's sidelines
       #ifdef _DEBUG
         Serial.println("There's been a problem searching for a free spot on white's sidelines!");
       #endif
@@ -741,29 +758,29 @@ void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
   
   else  
   {
-    Coord_X = 9;
-    Coord_Y = 0;
+    Coord_W = 9;
+    Coord_Z = 0;
     
-    while(Coord_Y <= 9)                                                           // Search from bottom right up to top right for a free square
+    while(Coord_Z <= 9)                                                           // Search from bottom right up to top right for a free square
     {
-      if(Piece_Track_Buffer[9][Coord_Y] == '0') {
+      if(Piece_Track_Buffer[9][Coord_Z] == '0') {
         break;
       }
-      Coord_Y++;    
+      Coord_Z++;    
     }
 
-    if(Coord_Y > 9) {                                                             // If there weren't any free squares on the right, search from top right to top left
-      Coord_Y = 9;
-      while(Coord_X >= 0)                                                                 
+    if(Coord_Z > 9) {                                                             // If there weren't any free squares on the right, search from top right to top left
+      Coord_Z = 9;
+      while(Coord_W >= 0)                                                                 
       {
-        if(Piece_Track_Buffer[Coord_X][9] == '0') {
+        if(Piece_Track_Buffer[Coord_W][9] == '0') {
           break;
         }
-        Coord_X--;    
+        Coord_W--;    
       }
     }
 
-    if(Coord_X < 0) {                                                             // By the time we reach here, we should have the x,y coordinates of the next free slot on black's sidelines
+    if(Coord_W < 0) {                                                             // By the time we reach here, we should have the x,y coordinates of the next free slot on black's sidelines
       #ifdef _DEBUG
         Serial.println("There's been a problem searching for a free spot on black's sidelines!");
       #endif
@@ -773,17 +790,17 @@ void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
 
   #ifdef _DEBUG
     Serial.print("Position to place removed piece is: (");
-    Serial.print(Coord_X); Serial.print(", "); Serial.print(Coord_Y); Serial.println(")");
+    Serial.print(Coord_W); Serial.print(", "); Serial.print(Coord_Z); Serial.println(")");
   #endif
 
   // 3)  --------------- Perform the movements to get the piece there ------------
   long X = Coord_U * STEPS_PER_SQUARE;                                            // Initial square
   long Y = Coord_V * STEPS_PER_SQUARE;
     
-  long U = Coord_X * STEPS_PER_SQUARE;                                            // Final square
-  long V = Coord_Y * STEPS_PER_SQUARE;
+  long U = Coord_W * STEPS_PER_SQUARE;                                            // Final square
+  long V = Coord_Z * STEPS_PER_SQUARE;
 
-  if(Coord_X == 0)                                                                // Left sideline
+  if(Coord_W == 0)                                                                // Left sideline
   {      
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
@@ -793,7 +810,7 @@ void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
     Move_Head_Extra(U, V);                                                        // Move to (U, V)  
     Disengage_Head();      
   }
-  else if(Coord_X == 9)                                                           // Right sideline
+  else if(Coord_W == 9)                                                           // Right sideline
   {
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
@@ -803,7 +820,7 @@ void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
     Move_Head_Extra(U, V);                                                        // Move to (U, V)  
     Disengage_Head();    
   }
-  else if(Coord_Y == 0)                                                           // Bottom sideline
+  else if(Coord_Z == 0)                                                           // Bottom sideline
   {
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
@@ -813,7 +830,7 @@ void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
     Move_Head_Extra(U, V);                                                        // Move to (U, V)  
     Disengage_Head();    
   }
-  else if(Coord_Y == 9)                                                           // Top sideline
+  else if(Coord_Z == 9)                                                           // Top sideline
   {
     Move_Head(X, Y);                                                              // Move to (X,Y)    
     Engage_Head();                                                                // Engage Head
@@ -825,7 +842,7 @@ void Remove_Piece(byte Coord_U, byte Coord_V, long X_CORNER_B, long Y_CORNER_B)
   }
 
   // 4)) Update position table
-  Update_Position_Table(Coord_U, Coord_V, Coord_X, Coord_Y);
+  Update_Position_Table(Coord_U, Coord_V, Coord_W, Coord_Z);
 }
 
 //--------------------------------------------------------------------------------
@@ -892,30 +909,14 @@ void Zero_Head()
 //--------------------------------------------------------------------------------
 void Button_Press()
 {
-  //Debounce Button. Is it a short or long press?
-  // Short - Pause/Resume, Long - Just reset piece track buffer.
-
+  //Debounce Button:
   static unsigned long last_interrupt_time = 0;  
   unsigned long interrupt_time = millis();
   
-  // If interrupts come faster than 50ms, assume it's a bounce and ignore
-  if (interrupt_time - last_interrupt_time > 50) 
-  {    
-    if(!digitalRead(Mode_Button))
-    {  
-      Intial_Button_Press_Time = millis();  
-      if(Pause_Flag == 0) {Pause_Flag = 1;}
-      else {Pause_Flag = 0;}
-    }
-    else
-    {
-      Total_Button_Press_Time = interrupt_time - Intial_Button_Press_Time; 
-    
-      if(Total_Button_Press_Time > 2000)
-      {           
-        Pause_Flag = 2;        
-      }
-    }
+  // If interrupts come faster than 500ms, assume it's a bounce and ignore
+  if (interrupt_time - last_interrupt_time > 500) 
+  {
+    Pause_Flag = !Pause_Flag;        
   }
     
   last_interrupt_time = interrupt_time;

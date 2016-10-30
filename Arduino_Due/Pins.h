@@ -7,13 +7,13 @@
 
 #define   STEPS_PER_SQUARE          7100    
 #define   STEPS_MIN                 0
-#define   STEPS_MAX                 (STEPS_PER_SQUARE * 9) - 1000
-#define   HALF_SQUARE               STEPS_PER_SQUARE/2
+#define   STEPS_MAX                 63900         //(STEPS_PER_SQUARE * 9)
+#define   HALF_SQUARE               3550          //STEPS_PER_SQUARE/2
 #define   STEPS_EXTRA               500
-#define   X_OFFSET                  -1000
+#define   X_OFFSET                  -1250
 #define   Y_OFFSET                  0
-#define   X_ZERO_OFFSET             500
-#define   Y_ZERO_OFFSET             1100
+#define   X_ZERO_OFFSET             0
+#define   Y_ZERO_OFFSET             1000
 
 #define   RED                       0
 #define   GREEN                     1
