@@ -1,22 +1,14 @@
 /*
  * This is the software that will run on the Arduino Due in the chessboard project.
  * 
- * Initially we're aiming to have the board simply play chess against itself. The Pi will send instructions for the moves and the Arduino will
- * respond with a DONE once that instruction has been carried out. 
- * 
- * 
  * To do next:
- *  
  *  - En Passant
  *  - Promotion
  * 
  * Functions:
  *  - Communication with Pi. Wait for a command from the Pi (me2e4) and transmit "DONE" when completed.
- * 
  *  - Raise and Lower Magnet Head
- *  
  *  - Zero the Magnet Head
- *  
  *  - Move Magnet Head to Position as quickly and smoothly as possible(X, Y)
  *  
  *  - Move Piece from square (A,B) to (C,D). 
@@ -55,6 +47,7 @@ byte  Update_MangetoSensor_Positions;
  
 unsigned long Total_Button_Press_Time, Intial_Button_Press_Time;
 byte Pause_Flag = 0;
+byte Head_Enabled_Flag = 0;
 
 AccelStepper Xstepper(AccelStepper::DRIVER, X_Stepper_Step, X_Stepper_Dir);       // Define some steppers and the pins that will use
 AccelStepper Ystepper(AccelStepper::DRIVER, Y_Stepper_Step, Y_Stepper_Dir);
@@ -105,9 +98,7 @@ void loop()
     Valid_Command = false;
     while(!Valid_Command)                                                         // Loop until we receive a valid command
     {
-      while(!Get_Command())                                                       // Wait for a command
-      {     
-      }
+      while(!Get_Command()) {}                                                    // Wait for a command
 
       #ifdef _DEBUG
         Serial.print("Command Received: ");                                       // Display whatever we have just received
@@ -612,70 +603,136 @@ void Print_Piece_Track_Buffer()
 //################################################################################
 //--------------------------------------------------------------------------------
 void Move_Head(long A, long B)
-{   
+{ 
   A += X_OFFSET;
   B += Y_OFFSET;
+
+  A = constrain(A, STEPS_MIN, STEPS_MAX + X_OFFSET);                              // Constrain range for symmetry
+  B = constrain(B, STEPS_MIN, STEPS_MAX + Y_OFFSET);   
   
-  A = constrain(A, STEPS_MIN, STEPS_MAX);
+  A = constrain(A, STEPS_MIN, STEPS_MAX);                                         // Constrain range for safety
   B = constrain(B, STEPS_MIN, STEPS_MAX);  
         
-  Xstepper.moveTo(A);
+  Xstepper.moveTo(A);                                                             // Set the postion to move to
   Ystepper.moveTo(B);
-  
-  while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {
-    if(!Pause_Flag) {
-      digitalWrite(Mode_Button_Light, HIGH);
-      Xstepper.run();  
-      Ystepper.run(); 
-    }
-    else  {
-      static unsigned long Toggle_Time = millis();
-      if(millis() - Toggle_Time > 250)  {
-        Toggle_Time = millis();
-        digitalWrite(Mode_Button_Light, !digitalRead(Mode_Button_Light)); 
-      }      
-    }
+
+  if(Head_Enabled_Flag) {                                                         // Move the head faster if it's not dragging a piece around
+    Xstepper.setMaxSpeed(STEPPER_ENGAGED_SPEED);
+    Xstepper.setAcceleration(STEPPER_ACCELERATION);   
+    Ystepper.setMaxSpeed(STEPPER_ENGAGED_SPEED);
+    Ystepper.setAcceleration(STEPPER_ACCELERATION);
   }
+  else  {
+    Xstepper.setMaxSpeed(STEPPER_DISENGAGED_SPEED);
+    Xstepper.setAcceleration(STEPPER_ACCELERATION);   
+    Ystepper.setMaxSpeed(STEPPER_DISENGAGED_SPEED);
+    Ystepper.setAcceleration(STEPPER_ACCELERATION);    
+  }  
+
+  if(Xstepper.distanceToGo()) {                                                   // Enable steppers only if they need enabling
+    digitalWrite(X_Stepper_nEn, LOW);
+  } 
+  if(Ystepper.distanceToGo()) {                                               
+    digitalWrite(Y_Stepper_nEn, LOW);
+  }
+  delay(5);
+  
+  while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {                     // Loop until the head has reached the desired position.
+    Check_if_Paused();
+    Xstepper.run();  
+    Ystepper.run();
+  }
+
+  digitalWrite(X_Stepper_nEn, HIGH);                                                // Disable steppers
+  digitalWrite(Y_Stepper_nEn, HIGH);  
 }
 
 //--------------------------------------------------------------------------------
 //################################################################################
 //--------------------------------------------------------------------------------
-void Move_Head_Extra(long A, long B)
-{   
-  long Was_X = Xstepper.currentPosition();
-  long Was_Y = Ystepper.currentPosition();     
-  
+void Move_Head_Extra(long A, long B)                                                // Function to move head a little further in the same direction to account for
+{                                                                                   // the chess piece following slightly behind due to friction etc
   A += X_OFFSET;
   B += Y_OFFSET;
+  
+  long Initial_X = Xstepper.currentPosition();
+  long Initial_Y = Ystepper.currentPosition();     
 
-  long X_Diff = A - Was_X;
-  long Y_Diff = B - Was_Y;
+  long X_Diff = A - Initial_X;
+  long Y_Diff = B - Initial_Y;
 
-  long Mag_Diff = sqrt((X_Diff*X_Diff) + (Y_Diff*Y_Diff));
+  long Mag_Diff = (long)sqrt((X_Diff*X_Diff) + (Y_Diff*Y_Diff));
   A += (X_Diff * STEPS_EXTRA) / Mag_Diff;
   B += (Y_Diff * STEPS_EXTRA) / Mag_Diff;
+
+  A = constrain(A, STEPS_MIN, STEPS_MAX + X_OFFSET);                              // Constrain range for symmetry
+  B = constrain(B, STEPS_MIN, STEPS_MAX + Y_OFFSET);
   
-  A = constrain(A, STEPS_MIN, STEPS_MAX);
+  A = constrain(A, STEPS_MIN, STEPS_MAX);                                         // Constrain range for safety
   B = constrain(B, STEPS_MIN, STEPS_MAX);  
         
   Xstepper.moveTo(A);
   Ystepper.moveTo(B);
+
+  if(Head_Enabled_Flag) {
+    Xstepper.setMaxSpeed(STEPPER_ENGAGED_SPEED);
+    Xstepper.setAcceleration(STEPPER_ACCELERATION);   
+    Ystepper.setMaxSpeed(STEPPER_ENGAGED_SPEED);
+    Ystepper.setAcceleration(STEPPER_ACCELERATION);
+  }
+  else  {
+    Xstepper.setMaxSpeed(STEPPER_DISENGAGED_SPEED);
+    Xstepper.setAcceleration(STEPPER_ACCELERATION);   
+    Ystepper.setMaxSpeed(STEPPER_DISENGAGED_SPEED);
+    Ystepper.setAcceleration(STEPPER_ACCELERATION);    
+  } 
+
+  if(Xstepper.distanceToGo()) {                                                   // Enable steppers if they need enabling
+    digitalWrite(X_Stepper_nEn, LOW);
+  } 
+  if(Ystepper.distanceToGo()) {                                               
+    digitalWrite(Y_Stepper_nEn, LOW);
+  }
+  delay(5);
   
-  while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {
-    if(!Pause_Flag) {
-      digitalWrite(Mode_Button_Light, HIGH);
-      Xstepper.run();  
-      Ystepper.run(); 
-    }
-    else  {
-      static unsigned long Toggle_Time = millis();
-      if(millis() - Toggle_Time > 250)  {
-        Toggle_Time = millis();
-        digitalWrite(Mode_Button_Light, !digitalRead(Mode_Button_Light)); 
-      }      
+  while(Xstepper.distanceToGo() or Ystepper.distanceToGo()) {                     // Loop until the head has reached the desired position
+    Check_if_Paused();
+    Xstepper.run();  
+    Ystepper.run();     
+  }
+
+  digitalWrite(X_Stepper_nEn, HIGH);                                                // Disable steppers
+  digitalWrite(Y_Stepper_nEn, HIGH);
+}
+
+//--------------------------------------------------------------------------------
+//################################################################################
+//--------------------------------------------------------------------------------
+void Check_if_Paused()
+{
+  if(!Pause_Flag)                                                               
+    return;
+
+  digitalWrite(X_Stepper_nEn, HIGH);                                                // Disable steppers
+  digitalWrite(Y_Stepper_nEn, HIGH);
+
+  while(Pause_Flag) {
+    static unsigned long Toggle_Time = millis();
+    if(millis() - Toggle_Time > 250)  {
+      Toggle_Time = millis();
+      digitalWrite(Mode_Button_Light, !digitalRead(Mode_Button_Light)); 
     }
   }
+
+  digitalWrite(Mode_Button_Light, HIGH);                                          // Ensure button light is on 
+
+  if(Xstepper.distanceToGo()) {                                                   // Enable steppers if they need enabling before returning
+    digitalWrite(X_Stepper_nEn, LOW);
+  } 
+  if(Ystepper.distanceToGo()) {                                               
+    digitalWrite(Y_Stepper_nEn, LOW);
+  }
+  delay(5);
 }
 
 //--------------------------------------------------------------------------------
@@ -683,7 +740,8 @@ void Move_Head_Extra(long A, long B)
 //--------------------------------------------------------------------------------
 void Engage_Head()
 {  
-  servo1.write(70);  
+  servo1.write(70); 
+  Head_Enabled_Flag = 1; 
   delay(500);
 }
 
@@ -693,6 +751,7 @@ void Engage_Head()
 void Disengage_Head()
 {  
   servo1.write(175); 
+  Head_Enabled_Flag = 0;
   delay(500);  
 }
 
@@ -854,49 +913,51 @@ void Zero_Head()
     Serial.println("Zeroing Head");
   #endif
 
-  Xstepper.setMaxSpeed(5000.0);
-  Xstepper.setAcceleration(50000.0);    
-  Ystepper.setMaxSpeed(5000.0);
-  Ystepper.setAcceleration(50000.0);
+  Xstepper.setMaxSpeed(STEPPER_ZEROING_SPEED);
+  Xstepper.setAcceleration(STEPPER_ACCELERATION);    
+  Ystepper.setMaxSpeed(STEPPER_ZEROING_SPEED);
+  Ystepper.setAcceleration(STEPPER_ACCELERATION);
 
   // --------------- First move out of corner if currently in it:
   Xstepper.move(STEPS_MAX);
+  digitalWrite(X_Stepper_nEn, LOW);                                                 // Enable stepper 
   while(!digitalRead(X_Limit_Switch))
   { 
     Xstepper.run();             
   }
+  digitalWrite(X_Stepper_nEn, HIGH);                                                // Disable stepper
   delay(250);
 
   Ystepper.move(STEPS_MAX);
+  digitalWrite(Y_Stepper_nEn, LOW);                                                 // Enable stepper
   while(!digitalRead(Y_Limit_Switch))
   { 
     Ystepper.run();     
   }
+  digitalWrite(Y_Stepper_nEn, HIGH);                                                // Disable stepper
   delay(250);
 
   // --------------- Now move into corner:
   Xstepper.move(-STEPS_MAX);
+  digitalWrite(X_Stepper_nEn, LOW);                                                 // Enable stepper 
   while(digitalRead(X_Limit_Switch))
   { 
     Xstepper.run();             
   }  
+  digitalWrite(X_Stepper_nEn, HIGH);                                                // Disable stepper
   delay(250);
 
   Ystepper.move(-STEPS_MAX);
+  digitalWrite(Y_Stepper_nEn, LOW);                                                 // Enable stepper
   while(digitalRead(Y_Limit_Switch))
   { 
     Ystepper.run();             
   } 
+  digitalWrite(Y_Stepper_nEn, HIGH);                                                // Disable stepper
   delay(250);
 
   Xstepper.setCurrentPosition(X_ZERO_OFFSET); 
-  Ystepper.setCurrentPosition(Y_ZERO_OFFSET);  
-
-  Xstepper.setMaxSpeed(30000.0);
-  Xstepper.setAcceleration(50000.0);   
-  Ystepper.setMaxSpeed(30000.0);
-  Ystepper.setAcceleration(50000.0);
-
+  Ystepper.setCurrentPosition(Y_ZERO_OFFSET);
   Move_Head(0,0);
 
   #ifdef _DEBUG                            

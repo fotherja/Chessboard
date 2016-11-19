@@ -19,6 +19,7 @@ void Setup_Pieces();
 void Button_Press();
 void Button_Release();
 void Zero_Head();
+void Check_if_Paused();
 
 //--- Classes --------------------------------------------------------------------
 

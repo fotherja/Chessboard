@@ -10,6 +10,11 @@ void Configure_Pins()
   pinMode(Y_Stepper_Step, OUTPUT);
   pinMode(Y_Stepper_Dir, OUTPUT);    
   pinMode(X_Stepper_Step, OUTPUT);
+  pinMode(X_Stepper_nEn, OUTPUT);
+  pinMode(Y_Stepper_nEn, OUTPUT);
+
+  digitalWrite(X_Stepper_nEn, HIGH);                                                // Disable steppers
+  digitalWrite(Y_Stepper_nEn, HIGH);                                                
     
   // Configure the switch lines for pullup:
   pinMode(X_Limit_Switch, INPUT_PULLUP);

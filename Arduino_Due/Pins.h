@@ -5,15 +5,20 @@
 #define   POSITIVE                  1
 #define   NEGATIVE                  0
 
-#define   STEPS_PER_SQUARE          7100    
+#define   STEPS_PER_SQUARE          3550    
 #define   STEPS_MIN                 0
-#define   STEPS_MAX                 63900         //(STEPS_PER_SQUARE * 9)
-#define   HALF_SQUARE               3550          //STEPS_PER_SQUARE/2
-#define   STEPS_EXTRA               500
-#define   X_OFFSET                  -1250
+#define   STEPS_MAX                 31950         // (STEPS_PER_SQUARE * 9)
+#define   HALF_SQUARE               1775          // STEPS_PER_SQUARE/2
+#define   STEPS_EXTRA               250
+#define   X_OFFSET                  -500             
 #define   Y_OFFSET                  0
-#define   X_ZERO_OFFSET             0
-#define   Y_ZERO_OFFSET             1000
+#define   X_ZERO_OFFSET             0             
+#define   Y_ZERO_OFFSET             0
+
+#define   STEPPER_ACCELERATION      50000.0
+#define   STEPPER_ZEROING_SPEED     2500.0
+#define   STEPPER_ENGAGED_SPEED     6000.0
+#define   STEPPER_DISENGAGED_SPEED  15000.0
 
 #define   RED                       0
 #define   GREEN                     1
@@ -36,8 +41,10 @@
 
 #define   X_Stepper_Dir             2                                             // Direction control for X axis stepper motor
 #define   X_Stepper_Step            3                                             // Step pin for X axis stepper motor
+#define   X_Stepper_nEn             7                                             // Enables the Y stepper motor when pulled low
 #define   Y_Stepper_Dir             4                                             // Direction control for Y axis stepper motor
 #define   Y_Stepper_Step            5                                             // Step pin for Y axis stepper motor
+#define   Y_Stepper_nEn             6                                             // Enables the Y stepper motor when pulled low
 
 #define   Mag_Sense_0               14                                            // Magnetoresitive Sense Line 0
 #define   Mag_Sense_1               15                                            // Magnetoresitive Sense Line 1
